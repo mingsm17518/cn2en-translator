@@ -542,10 +542,13 @@ def on_press(key, app):
                 app.replace_text()
             else:
                 app.enter_translation_mode()
-        # F9 key - end translation mode and auto-translate
+        # F9 key - 无论是否在翻译模式，都执行翻译
         elif key == keyboard.Key.f9:
-            if app.is_translating:
-                app.end_translation_mode()
+            # 如果不在翻译模式，先进入翻译模式
+            if not app.is_translating:
+                app.enter_translation_mode()
+            # 执行翻译
+            app.end_translation_mode()
         # Escape key
         elif key == keyboard.Key.esc:
             if app.is_translating:
@@ -584,15 +587,8 @@ def main():
     # Create application instance
     app = TranslatorApp()
 
-    # Show startup message via tooltip after a short delay
-    def show_startup():
-        app._show_tooltip(
-            "CN2EN-Translator 已启动",
-            "F8 进入 | F9 翻译 | 托盘图标右键查看帮助"
-        )
-
-    # Schedule startup message
-    app.tooltip.after(500, show_startup)
+    # 启动时自动进入翻译模式（默认隐藏窗口，按F9才显示翻译结果）
+    app.enter_translation_mode()
 
     # Create keyboard listener
     def make_handler(app_instance):
