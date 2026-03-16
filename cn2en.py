@@ -2,7 +2,7 @@
 """
 CN2EN-Translator - Chinese to English Translation Tool
 Python Implementation
-Hotkeys: F8 to toggle translation mode, Esc to exit translation mode
+Hotkeys: F8 to enter translation mode, F9 to translate and exit
 """
 
 import threading
@@ -120,7 +120,7 @@ class TranslatorApp:
         self.translated_label = ttk.Label(self.frame, text='', style='Translation.TLabel', wraplength=400)
         self.translated_label.pack(anchor=tk.W, pady=(0, 5))
 
-        self.hint_label = ttk.Label(self.frame, text='按 F9 翻译 | F8 替换 | Esc 退出', style='Translation.TLabel', foreground='gray')
+        self.hint_label = ttk.Label(self.frame, text='F8 进入 | F9 翻译并退出 | Esc 退出', style='Translation.TLabel', foreground='gray')
         self.hint_label.pack(anchor=tk.W)
 
     def toggle_translation_mode(self):
@@ -132,6 +132,27 @@ class TranslatorApp:
             self.exit_translation_mode()
         else:
             self.enter_translation_mode()
+
+    def end_translation_mode(self):
+        """End translation mode and translate captured text"""
+        # Try to get text from clipboard or selection
+        clip = pyperclip.paste()
+
+        # If clipboard is empty, try to copy selection
+        if not clip or not self.has_chinese_char(clip):
+            self._try_auto_copy()
+            time.sleep(0.2)
+            clip = pyperclip.paste()
+
+        if clip and self.has_chinese_char(clip):
+            self.original_text = clip
+            self.show_translating()
+            self.translate_text(self.original_text)
+            # Don't exit yet - wait for translation to complete
+            # Translation will handle the exit itself via callback
+        else:
+            # No Chinese text found, just exit
+            self._do_exit_translation_mode()
 
     def enter_translation_mode(self):
         """Enter translation mode"""
@@ -152,7 +173,7 @@ class TranslatorApp:
             self.icon.title = "CN2EN-Translator (翻译模式)"
 
         # Show notification via tooltip
-        self.show_tooltip("翻译模式已开启", "请输入中文内容")
+        self.show_tooltip("翻译模式已开启", "复制中文后按 F9 翻译")
 
         # Start IME hook for capturing Chinese input
         self._start_ime_hook()
@@ -162,6 +183,12 @@ class TranslatorApp:
 
     def exit_translation_mode(self):
         """Exit translation mode"""
+        self._do_exit_translation_mode()
+        # Show notification
+        self.show_tooltip("翻译模式已关闭", "")
+
+    def _do_exit_translation_mode(self):
+        """Internal method to exit translation mode (without notification)"""
         self.is_translating = False
 
         # Stop clipboard monitoring
@@ -175,16 +202,10 @@ class TranslatorApp:
         # Stop IME hook
         self._stop_ime_hook()
 
-        # Hide tooltip
-        self.hide_tooltip()
-
         # Update tray icon to gray
         if self.icon:
             self.icon.icon = self.icon_idle
             self.icon.title = "CN2EN-Translator (等待中)"
-
-        # Show notification
-        self.show_tooltip("翻译模式已关闭", "")
 
     def start_clipboard_monitor(self):
         """Start monitoring clipboard for changes"""
@@ -197,27 +218,20 @@ class TranslatorApp:
         self.running = False
 
     def monitor_clipboard(self):
-        """Monitor clipboard for Chinese text - auto-capture"""
+        """Monitor clipboard for Chinese text - just capture, no auto-translate"""
         # Clear clipboard first
         pyperclip.copy("")
         self.last_clipboard_content = ""
-        self._auto_copy_count = 0  # Track auto-copy attempts
 
         while self.running and self.is_translating:
             try:
                 # Get clipboard content
                 clip_content = pyperclip.paste()
 
-                # Check if there's new content
+                # Just capture and store, don't auto-translate
+                # Translation only happens when F9 is pressed
                 if clip_content and clip_content != self.last_clipboard_content:
                     self.last_clipboard_content = clip_content
-                    # Just track, don't auto-translate
-
-                # If clipboard is empty or no Chinese, try auto-copy
-                if not clip_content or not self.has_chinese_char(clip_content):
-                    if self._auto_copy_count < 3:  # Limit attempts
-                        self._try_auto_copy()
-                        self._auto_copy_count += 1
 
                 time.sleep(self.clipboard_check_interval)
             except Exception as e:
@@ -318,8 +332,11 @@ class TranslatorApp:
             print(f"Translate selection error: {e}")
 
     def show_translating(self):
-        """Show 'translating' message"""
-        # Get mouse position
+        """Show 'translating' message (thread-safe)"""
+        self.tooltip.after(0, self._show_translating)
+
+    def _show_translating(self):
+        """Internal method to show translating message"""
         try:
             x, y = get_mouse_position()
             self._show_tooltip_at("翻译中...", "", x + 20, y + 20)
@@ -344,7 +361,7 @@ class TranslatorApp:
             # Check response status
             if response.status_code != 200:
                 self.show_tooltip(f"翻译失败: HTTP {response.status_code}", "")
-                threading.Timer(3, self.hide_tooltip).start()
+                threading.Timer(1, self._do_exit_translation_mode).start()
                 return
 
             # Parse JSON
@@ -353,30 +370,34 @@ class TranslatorApp:
             if result.get('responseStatus') == 200:
                 self.translated_text = result.get('responseData', {}).get('translatedText', '')
                 if self.translated_text:
-                    # Show translation result
+                    # Show translation result (this will call _do_exit_translation_mode)
                     self.show_translation_result()
                 else:
                     self.show_tooltip("翻译失败: 无结果", "")
-                    threading.Timer(3, self.hide_tooltip).start()
+                    threading.Timer(1, self._do_exit_translation_mode).start()
             else:
                 error_msg = result.get('responseDetails', '翻译失败')
                 self.show_tooltip(f"翻译失败: {error_msg}", "")
-                threading.Timer(3, self.hide_tooltip).start()
+                threading.Timer(1, self._do_exit_translation_mode).start()
 
         except requests.exceptions.Timeout:
             self.show_tooltip("翻译失败: 请求超时", "")
-            threading.Timer(3, self.hide_tooltip).start()
+            threading.Timer(1, self._do_exit_translation_mode).start()
         except requests.exceptions.RequestException as e:
             print(f"Request exception: {e}")  # Debug
             self.show_tooltip(f"翻译失败: 网络错误", "")
-            threading.Timer(3, self.hide_tooltip).start()
+            threading.Timer(1, self._do_exit_translation_mode).start()
         except Exception as e:
             print(f"Exception: {e}")  # Debug
             self.show_tooltip(f"翻译失败: {str(e)}", "")
-            threading.Timer(3, self.hide_tooltip).start()
+            threading.Timer(1, self._do_exit_translation_mode).start()
 
     def show_translation_result(self):
-        """Show translation result in tooltip"""
+        """Show translation result in tooltip (thread-safe)"""
+        self.tooltip.after(0, self._show_translation_result)
+
+    def _show_translation_result(self):
+        """Internal method to show translation result"""
         try:
             x, y = get_mouse_position()
             self._show_tooltip_at(
@@ -389,6 +410,8 @@ class TranslatorApp:
                 f"原文: {self.original_text}",
                 f"英文: {self.translated_text}"
             )
+        # Exit translation mode after showing result
+        self._do_exit_translation_mode()
 
     def show_tooltip(self, original_msg, translated_msg):
         """Show tooltip at center of screen (thread-safe)"""
@@ -437,11 +460,16 @@ class TranslatorApp:
             pass
 
     def replace_text(self):
-        """Replace original text with translated text"""
+        """Replace original text with translated text (thread-safe)"""
         if not self.translated_text:
             self.show_tooltip("无翻译结果", "请先输入中文内容")
             return
 
+        # Schedule the replace operation in main thread
+        self.tooltip.after(0, self._do_replace_text)
+
+    def _do_replace_text(self):
+        """Internal method to do the actual text replacement"""
         # Copy translation to clipboard
         pyperclip.copy(self.translated_text)
 
@@ -469,11 +497,15 @@ class TranslatorApp:
         info = """CN2EN-Translator 正在后台运行
 
 快捷键:
-- F8: 开始/结束翻译
+- F8: 进入翻译模式
+- F9: 翻译并退出翻译模式
 - Ctrl+Shift+T: 快速翻译选中文字
 - Esc: 退出翻译模式
 
-按 F8 进入翻译模式，输入后按 F9 翻译"""
+1. 按 F8 进入翻译模式
+2. 复制中文文本
+3. 按 F9 翻译并显示结果
+4. 再次按 F8 替换为英文"""
         # Use tkinter messagebox for thread-safe display
         self.tooltip.after(0, lambda: messagebox.showinfo("CN2EN-Translator", info))
 
@@ -498,9 +530,22 @@ class TranslatorApp:
 def on_press(key, app):
     """Handle key press events"""
     try:
-        # F8 key
+        # F8 key - enter translation mode or replace text
         if key == keyboard.Key.f8:
-            app.toggle_translation_mode()
+            if app.is_translating:
+                # If already translating and we have translation, replace text first
+                if app.translated_text:
+                    app.replace_text()
+                app.exit_translation_mode()
+            elif app.translated_text:
+                # If we have a previous translation, replace text now
+                app.replace_text()
+            else:
+                app.enter_translation_mode()
+        # F9 key - end translation mode and auto-translate
+        elif key == keyboard.Key.f9:
+            if app.is_translating:
+                app.end_translation_mode()
         # Escape key
         elif key == keyboard.Key.esc:
             if app.is_translating:
@@ -515,17 +560,6 @@ def on_press(key, app):
             app.translate_selection()
             app._ctrl_pressed = False
             app._shift_pressed = False
-        # F9 key: confirm and translate
-        elif key == keyboard.Key.f9 and app.is_translating:
-            # Try to get Chinese from clipboard
-            clip = pyperclip.paste()
-            if clip and app.has_chinese_char(clip):
-                app.original_text = clip
-                app.show_translating()
-                app.translate_text(app.original_text)
-            else:
-                app.show_tooltip("未检测到中文", "请复制中文后再试")
-                threading.Timer(2, app.hide_tooltip).start()
         # Capture Chinese character input during translation mode (works only when IME is off)
         elif app.is_translating:
             # Reset modifier keys
@@ -550,20 +584,15 @@ def main():
     # Create application instance
     app = TranslatorApp()
 
-    # Show startup message after a short delay to ensure tkinter is ready
+    # Show startup message via tooltip after a short delay
     def show_startup():
-        info = """CN2EN-Translator 已启动
-
-快捷键:
-- F8: 开始/结束翻译
-- Ctrl+Shift+T: 快速翻译选中文字
-- Esc: 退出翻译模式
-
-按 F8 进入翻译模式，输入后按 F9 翻译"""
-        messagebox.showinfo("CN2EN-Translator", info)
+        app._show_tooltip(
+            "CN2EN-Translator 已启动",
+            "F8 进入 | F9 翻译 | 托盘图标右键查看帮助"
+        )
 
     # Schedule startup message
-    app.tooltip.after(100, show_startup)
+    app.tooltip.after(500, show_startup)
 
     # Create keyboard listener
     def make_handler(app_instance):
