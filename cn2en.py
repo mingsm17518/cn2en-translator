@@ -42,7 +42,7 @@ class TranslatorApp:
         self.is_translating = False
         self.original_text = ""
         self.translated_text = ""
-        self.clipboard_check_interval = 0.1  # seconds (faster)
+        self.clipboard_check_interval = 0.05  # seconds (faster)
         self.clipboard_monitor_timer = None
         self.last_clipboard_content = ""
 
@@ -141,7 +141,7 @@ class TranslatorApp:
         # If clipboard is empty, try to copy selection
         if not clip or not self.has_chinese_char(clip):
             self._try_auto_copy()
-            time.sleep(0.2)
+            time.sleep(0.05)
             clip = pyperclip.paste()
 
         if clip and self.has_chinese_char(clip):
@@ -251,14 +251,14 @@ class TranslatorApp:
             keyboard_controller.release('a')
             keyboard_controller.release(Key.ctrl_l)
 
-            time.sleep(0.05)
+            time.sleep(0.02)
 
             keyboard_controller.press(Key.ctrl_l)
             keyboard_controller.press('c')
             keyboard_controller.release('c')
             keyboard_controller.release(Key.ctrl_l)
 
-            time.sleep(0.1)
+            time.sleep(0.03)
         except Exception as e:
             print(f"Auto copy error: {e}")
 
@@ -317,7 +317,7 @@ class TranslatorApp:
             keyboard_controller.release(Key.ctrl_l)
 
             # Wait a bit for clipboard to update
-            time.sleep(0.1)
+            time.sleep(0.03)
 
             # Get clipboard content
             clip_content = pyperclip.paste()
