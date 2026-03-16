@@ -42,7 +42,7 @@ class TranslatorApp:
         self.is_translating = False
         self.original_text = ""
         self.translated_text = ""
-        self.clipboard_check_interval = 0.2  # seconds
+        self.clipboard_check_interval = 0.1  # seconds (faster)
         self.clipboard_monitor_timer = None
         self.last_clipboard_content = ""
 
@@ -58,6 +58,7 @@ class TranslatorApp:
         self.input_buffer = ""
         self.input_timeout = 1.0  # seconds
         self._input_timer = None
+        self._pending_text = ""  # Text waiting for manual confirm
         self._ctrl_pressed = False
         self._shift_pressed = False
 
@@ -119,7 +120,7 @@ class TranslatorApp:
         self.translated_label = ttk.Label(self.frame, text='', style='Translation.TLabel', wraplength=400)
         self.translated_label.pack(anchor=tk.W, pady=(0, 5))
 
-        self.hint_label = ttk.Label(self.frame, text='按 Enter 确认 | F8 替换 | Esc 退出', style='Translation.TLabel', foreground='gray')
+        self.hint_label = ttk.Label(self.frame, text='按 F9 翻译 | F8 替换 | Esc 退出', style='Translation.TLabel', foreground='gray')
         self.hint_label.pack(anchor=tk.W)
 
     def toggle_translation_mode(self):
@@ -139,6 +140,8 @@ class TranslatorApp:
         self.translated_text = ""
         self.last_clipboard_content = ""
         self.input_buffer = ""  # Clear input buffer
+        self._pending_text = ""  # Clear pending text
+        self._auto_copy_count = 0  # Reset auto-copy counter
 
         # Clear clipboard to capture new content
         pyperclip.copy("")
@@ -194,43 +197,27 @@ class TranslatorApp:
         self.running = False
 
     def monitor_clipboard(self):
-        """Monitor clipboard for Chinese text"""
+        """Monitor clipboard for Chinese text - auto-capture"""
         # Clear clipboard first
         pyperclip.copy("")
         self.last_clipboard_content = ""
-
-        # For tracking auto-copy attempts
-        self._last_auto_copy_time = time.time()
-        self._auto_copy_interval = 0.8  # seconds between auto-copy attempts
+        self._auto_copy_count = 0  # Track auto-copy attempts
 
         while self.running and self.is_translating:
             try:
-                current_time = time.time()
-
                 # Get clipboard content
                 clip_content = pyperclip.paste()
 
-                # Check if there's new content (non-empty and different from last)
+                # Check if there's new content
                 if clip_content and clip_content != self.last_clipboard_content:
                     self.last_clipboard_content = clip_content
+                    # Just track, don't auto-translate
 
-                    # Check if contains Chinese characters
-                    if self.has_chinese_char(clip_content):
-                        self.original_text = clip_content
-                        # Show "translating" status
-                        self.show_translating()
-                        # Translate
-                        self.translate_text(self.original_text)
-                        # Reset auto-copy timer after successful translation
-                        self._last_auto_copy_time = current_time
-
-                # If no translation triggered for a while, try auto-copy
-                # This helps capture text typed via IME
+                # If clipboard is empty or no Chinese, try auto-copy
                 if not clip_content or not self.has_chinese_char(clip_content):
-                    if current_time - self._last_auto_copy_time > self._auto_copy_interval:
-                        # Try to copy current selection
+                    if self._auto_copy_count < 3:  # Limit attempts
                         self._try_auto_copy()
-                        self._last_auto_copy_time = current_time
+                        self._auto_copy_count += 1
 
                 time.sleep(self.clipboard_check_interval)
             except Exception as e:
@@ -340,22 +327,17 @@ class TranslatorApp:
             self._show_tooltip("翻译中...", "")
 
     def translate_text(self, text):
-        """Call LibreTranslate API to translate text"""
+        """Call MyMemory API to translate text (with better langpair)"""
         try:
-            # Try LibreTranslate (free, open source)
-            url = "https://libretranslate.com/translate"
-            data = {
+            # MyMemory API - better langpair for Chinese
+            url = "https://api.mymemory.translated.net/get"
+            params = {
                 'q': text,
-                'source': 'zh',
-                'target': 'en',
-                'format': 'text'
-            }
-            headers = {
-                'Content-Type': 'application/json'
+                'langpair': 'zh|en'
             }
 
             print(f"Translating: {text}")  # Debug
-            response = requests.post(url, json=data, headers=headers, timeout=10)
+            response = requests.get(url, params=params, timeout=10)
             print(f"Response status: {response.status_code}")  # Debug
             print(f"Response text: {response.text[:200]}")  # Debug
 
@@ -368,20 +350,17 @@ class TranslatorApp:
             # Parse JSON
             result = response.json()
 
-            if 'translatedText' in result:
-                self.translated_text = result.get('translatedText', '')
+            if result.get('responseStatus') == 200:
+                self.translated_text = result.get('responseData', {}).get('translatedText', '')
                 if self.translated_text:
                     # Show translation result
                     self.show_translation_result()
                 else:
                     self.show_tooltip("翻译失败: 无结果", "")
                     threading.Timer(3, self.hide_tooltip).start()
-            elif 'error' in result:
-                error_msg = result.get('error', '翻译失败')
-                self.show_tooltip(f"翻译失败: {error_msg}", "")
-                threading.Timer(3, self.hide_tooltip).start()
             else:
-                self.show_tooltip("翻译失败: 未知错误", "")
+                error_msg = result.get('responseDetails', '翻译失败')
+                self.show_tooltip(f"翻译失败: {error_msg}", "")
                 threading.Timer(3, self.hide_tooltip).start()
 
         except requests.exceptions.Timeout:
@@ -494,7 +473,7 @@ class TranslatorApp:
 - Ctrl+Shift+T: 快速翻译选中文字
 - Esc: 退出翻译模式
 
-按 F8 进入翻译模式，输入后按 Enter 确认"""
+按 F8 进入翻译模式，输入后按 F9 翻译"""
         # Use tkinter messagebox for thread-safe display
         self.tooltip.after(0, lambda: messagebox.showinfo("CN2EN-Translator", info))
 
@@ -536,12 +515,17 @@ def on_press(key, app):
             app.translate_selection()
             app._ctrl_pressed = False
             app._shift_pressed = False
-        # Enter key: confirm translation
-        elif key == keyboard.Key.enter and app.is_translating and app.input_buffer:
-            # Process input buffer immediately
-            if app._input_timer:
-                app._input_timer.cancel()
-            app.process_input_buffer()
+        # F9 key: confirm and translate
+        elif key == keyboard.Key.f9 and app.is_translating:
+            # Try to get Chinese from clipboard
+            clip = pyperclip.paste()
+            if clip and app.has_chinese_char(clip):
+                app.original_text = clip
+                app.show_translating()
+                app.translate_text(app.original_text)
+            else:
+                app.show_tooltip("未检测到中文", "请复制中文后再试")
+                threading.Timer(2, app.hide_tooltip).start()
         # Capture Chinese character input during translation mode (works only when IME is off)
         elif app.is_translating:
             # Reset modifier keys
@@ -575,7 +559,7 @@ def main():
 - Ctrl+Shift+T: 快速翻译选中文字
 - Esc: 退出翻译模式
 
-按 F8 进入翻译模式，输入后按 Enter 确认"""
+按 F8 进入翻译模式，输入后按 F9 翻译"""
         messagebox.showinfo("CN2EN-Translator", info)
 
     # Schedule startup message
