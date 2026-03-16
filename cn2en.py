@@ -101,6 +101,7 @@ class TranslatorApp:
         self.tooltip.withdraw()  # Hide initially
         self.tooltip.overrideredirect(True)  # No window decorations
         self.tooltip.attributes('-topmost', True)  # Always on top
+        self.tooltip.bind('<Escape>', lambda e: self.hide_tooltip())  # Escape to close
 
         # Create styling
         style = ttk.Style()
@@ -118,8 +119,13 @@ class TranslatorApp:
         self.translated_label = ttk.Label(self.frame, text='', style='Translation.TLabel', wraplength=400)
         self.translated_label.pack(anchor=tk.W, pady=(0, 5))
 
-        self.hint_label = ttk.Label(self.frame, text='F8 进入 | F9 翻译并退出 | Esc 退出', style='Translation.TLabel', foreground='gray')
+        self.hint_label = ttk.Label(self.frame, text='F8 进入 | F9 翻译 | Esc 关闭', style='Translation.TLabel', foreground='gray')
         self.hint_label.pack(anchor=tk.W)
+
+        # Click anywhere to close tooltip
+        self.frame.bind('<Button-1>', lambda e: self.hide_tooltip())
+        self.original_label.bind('<Button-1>', lambda e: self.hide_tooltip())
+        self.translated_label.bind('<Button-1>', lambda e: self.hide_tooltip())
 
     def toggle_translation_mode(self):
         """Toggle translation mode on/off"""
@@ -170,9 +176,6 @@ class TranslatorApp:
             self.icon.icon = self.icon_active
             self.icon.title = "CN2EN-Translator (翻译模式)"
 
-        # Show notification via tooltip
-        self.show_tooltip("翻译模式已开启", "复制中文后按 F9 翻译")
-
         # Start IME hook for capturing Chinese input
         self._start_ime_hook()
 
@@ -182,8 +185,6 @@ class TranslatorApp:
     def exit_translation_mode(self):
         """Exit translation mode"""
         self._do_exit_translation_mode()
-        # Show notification
-        self.show_tooltip("翻译模式已关闭", "")
 
     def _do_exit_translation_mode(self):
         """Internal method to exit translation mode (without notification)"""
@@ -548,8 +549,7 @@ def main():
     # Create application instance
     app = TranslatorApp()
 
-    # 启动时自动进入翻译模式（默认隐藏窗口，按F9才显示翻译结果）
-    app.enter_translation_mode()
+    # 启动时不进入翻译模式，静默运行
 
     # Create keyboard listener
     def make_handler(app_instance):
