@@ -59,8 +59,6 @@ class TranslatorApp:
         self.input_timeout = 1.0  # seconds
         self._input_timer = None
         self._pending_text = ""  # Text waiting for manual confirm
-        self._ctrl_pressed = False
-        self._shift_pressed = False
 
         # Start clipboard monitoring thread
         self.monitor_clipboard_thread = None
@@ -274,7 +272,6 @@ class TranslatorApp:
                 self._input_timer.start()
 
         # Note: IME hook disabled due to compatibility issues
-        # Use Ctrl+Shift+T to translate selected text instead
 
     def _stop_ime_hook(self):
         """Stop IME composition hook (placeholder)"""
@@ -305,31 +302,6 @@ class TranslatorApp:
             self.translate_text(self.original_text)
         self.input_buffer = ""
 
-    def translate_selection(self):
-        """Translate currently selected text (Ctrl+Shift+T)"""
-        try:
-            # Copy current selection to clipboard
-            from pynput.keyboard import Controller, Key
-            keyboard_controller = Controller()
-            keyboard_controller.press(Key.ctrl_l)
-            keyboard_controller.press('c')
-            keyboard_controller.release('c')
-            keyboard_controller.release(Key.ctrl_l)
-
-            # Wait a bit for clipboard to update
-            time.sleep(0.03)
-
-            # Get clipboard content
-            clip_content = pyperclip.paste()
-            if clip_content and self.has_chinese_char(clip_content):
-                self.original_text = clip_content
-                self.show_translating()
-                self.translate_text(self.original_text)
-            else:
-                self.show_tooltip("未选中中文", "请选中中文文本后按 Ctrl+Shift+T")
-                threading.Timer(2, self.hide_tooltip).start()
-        except Exception as e:
-            print(f"Translate selection error: {e}")
 
     def show_translating(self):
         """Show 'translating' message (thread-safe)"""
@@ -499,7 +471,6 @@ class TranslatorApp:
 快捷键:
 - F8: 进入翻译模式
 - F9: 翻译并退出翻译模式
-- Ctrl+Shift+T: 快速翻译选中文字
 - Esc: 退出翻译模式
 
 1. 按 F8 进入翻译模式
@@ -553,16 +524,6 @@ def on_press(key, app):
         elif key == keyboard.Key.esc:
             if app.is_translating:
                 app.exit_translation_mode()
-        # Ctrl+Shift+T: Quick translate selected text
-        elif key == keyboard.Key.ctrl_l or key == keyboard.Key.ctrl_r:
-            app._ctrl_pressed = True
-        elif key == keyboard.Key.shift_l or key == keyboard.Key.shift_r:
-            app._shift_pressed = True
-        elif hasattr(key, 'char') and key.char == 't' and getattr(app, '_ctrl_pressed', False) and getattr(app, '_shift_pressed', False):
-            # Ctrl+Shift+T - translate selected text
-            app.translate_selection()
-            app._ctrl_pressed = False
-            app._shift_pressed = False
         # Capture Chinese character input during translation mode (works only when IME is off)
         elif app.is_translating:
             # Reset modifier keys
